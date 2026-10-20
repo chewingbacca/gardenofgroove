@@ -164,6 +164,7 @@ private:
     int liveNote[8] {};
     bool liveInit = false;
     int prevIdx = -1;
+    float pluckSm = 1.0f, grainSm = 1.0f;
     juce::Random rng;
 
     juce::Reverb reverb;

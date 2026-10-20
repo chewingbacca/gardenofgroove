@@ -31,6 +31,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout GrooveGardenProcessor::creat
     l.add (std::make_unique<juce::AudioParameterChoice> (ParameterID { "scale", 1 }, "Scale",
             juce::StringArray { "Minor", "Major", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Pent Minor", "Pent Major" }, 0));
     l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "freeze", 1 }, "Freeze", false));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "pluckOn", 1 },   "Melody On",  true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "seqOn", 1 },     "Chop On",    true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "evolveOn", 1 },  "Evolve On",  true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "motionOn", 1 },  "Motion On",  true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "granOn", 1 },    "Grains On",  true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "delayOn", 1 },   "Delay On",   true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "shimmerOn", 1 }, "Shimmer On", true));
+    l.add (std::make_unique<juce::AudioParameterBool> (ParameterID { "reverbOn", 1 },  "Reverb On",  true));
 
     auto lin = [&] (const char* id, const char* name, float lo, float hi, float def)
     {
@@ -135,6 +143,8 @@ void GrooveGardenProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     chorusPhase = 0.0f;
     liveInit = false;
     prevIdx = -1;
+    pluckSm = 1.0f;
+    grainSm = 1.0f;
 
     curDelay = (float) (0.375 * sampleRate);
     reverb.setSampleRate (sampleRate);
@@ -163,15 +173,19 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
     // ---- transport ----
     double bpm = 120.0, ppq = 0.0;
-    bool playing = false, havePpq = false;
+    bool playing = false, havePpq = false, hasTransport = false;
     if (auto* ph = getPlayHead())
         if (auto pos = ph->getPosition())
         {
+            hasTransport = true;
             if (auto b = pos->getBpm()) bpm = *b;
             playing = pos->getIsPlaying();
             if (auto p = pos->getPpqPosition()) { ppq = *p; havePpq = true; }
         }
     if (bpm < 20.0) bpm = 120.0;
+    // the sequencer, melody and grain bursts only run while the host is playing
+    // (hosts that give no transport info at all keep the old free-running behaviour)
+    const bool running = hasTransport ? playing : true;
     double songPos = (playing && havePpq) ? ppq : freePos;
     const double qPerSample = bpm / 60.0 / sr;
 
@@ -189,6 +203,14 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const int rootIdx    = (int) param ("root");
     const int scaleIdx   = (int) param ("scale");
     const bool freeze    = param ("freeze") > 0.5f;
+    const bool pluckOn   = param ("pluckOn") > 0.5f;
+    const bool seqOn     = param ("seqOn") > 0.5f;
+    const bool evolveOn  = param ("evolveOn") > 0.5f;
+    const bool motionOn  = param ("motionOn") > 0.5f;
+    const bool granOn    = param ("granOn") > 0.5f;
+    const bool delayOn   = param ("delayOn") > 0.5f;
+    const bool shimmerOn = param ("shimmerOn") > 0.5f;
+    const bool reverbOn  = param ("reverbOn") > 0.5f;
     const float depth    = param ("depth");
     const float source   = param ("source");
     const float evolve   = param ("evolve");
@@ -216,12 +238,13 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float mix      = param ("mix");
     const float dMix     = param ("delayMix");
     const float dFb      = param ("delayFb");
-    const float shimmer  = param ("shimmer");
-    const float rMix     = param ("reverbMix");
+    const float shimmer  = shimmerOn ? param ("shimmer") : 0.0f;
+    const float rMix     = reverbOn ? param ("reverbMix") : 0.0f;
     const float rSize    = param ("reverbSize");
     const float outGain  = juce::Decibels::decibelsToGain (param ("output"));
 
-    if (!liveInit || evolve < 0.001f)
+    const bool doEvolve = evolveOn && evolve >= 0.001f;
+    if (!liveInit || !doEvolve)
     {
         for (int i = 0; i < 8; ++i) { liveLevel[i] = baseLevel[i]; liveNote[i] = baseNote[i]; }
         liveInit = true;
@@ -370,15 +393,17 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         const int idx = (int) ((((long long) fl % 8) + 8) % 8);
         lastIdx = idx;
 
-        if (idx != prevIdx)
+        if (!running)
+            prevIdx = -1;   // so step 1 fires again as soon as playback starts
+        else if (idx != prevIdx)
         {
-            if (idx == 0 && evolve >= 0.001f) mutate();
+            if (idx == 0 && doEvolve) mutate();
             prevIdx = idx;
             const float lv = liveLevel[idx];
             if (lv > 0.05f)
             {
-                if (pLevel > 0.001f) triggerPluck (liveNote[idx], lv);
-                if (gBurst > 0.001f && gLevel > 0.001f)
+                if (pluckOn && pLevel > 0.001f) triggerPluck (liveNote[idx], lv);
+                if (granOn && gBurst > 0.001f && gLevel > 0.001f)
                 {
                     const int cnt = 1 + (int) (gBurst * 6.0f);
                     for (int k = 0; k < cnt; ++k) spawnGrain (lv);
@@ -390,8 +415,9 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         if (shape == 0)      env = std::sin (pi * frac);
         else if (shape == 1) env = 1.0f - std::abs (2.0f * frac - 1.0f);
 
-        const float m = liveLevel[idx] * env;
-        const float target = (1.0f - depth) + depth * m;
+        const bool chop = running && seqOn;
+        const float m = chop ? liveLevel[idx] * env : 0.5f;
+        const float target = chop ? (1.0f - depth) + depth * m : 1.0f;
         gateGain += (target - gateGain) * smoothCoef;
         modSmooth += (m - modSmooth) * modCoef;
 
@@ -427,7 +453,7 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         r = airShelf[1].processSample (r) * source;
 
         // free-running grain clouds
-        if (gDensity > 0.001f && gLevel > 0.001f)
+        if (running && granOn && gDensity > 0.001f && gLevel > 0.001f)
         {
             grainTimer -= 1.0f;
             if (grainTimer <= 0.0f)
@@ -436,6 +462,20 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                 const float rate = 0.5f + gDensity * gDensity * 70.0f;
                 grainTimer = fsr / rate * (0.5f + rng.nextFloat());
             }
+        }
+
+        // fade grains / plucks out when switched off, then silence the voices
+        grainSm += ((granOn ? 1.0f : 0.0f) - grainSm) * 0.003f;
+        pluckSm += ((pluckOn ? 1.0f : 0.0f) - pluckSm) * 0.003f;
+        if (! granOn && grainSm < 1.0e-4f && grainSm > 0.0f)
+        {
+            grainSm = 0.0f;
+            for (auto& g : grains) g.active = false;
+        }
+        if (! pluckOn && pluckSm < 1.0e-4f && pluckSm > 0.0f)
+        {
+            pluckSm = 0.0f;
+            for (auto& v : plucks) v.active = false;
         }
 
         float gOutL = 0.0f, gOutR = 0.0f;
@@ -474,11 +514,11 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             if (++v.age > v.excLen * 2 && v.env < 1.0e-6f) v.active = false;
         }
 
-        l += std::tanh (gOutL) + std::tanh (pOutL * pLevel * 1.2f) * 0.8f;
-        r += std::tanh (gOutR) + std::tanh (pOutR * pLevel * 1.2f) * 0.8f;
+        l += std::tanh (gOutL) * grainSm + std::tanh (pOutL * pLevel * 1.2f) * 0.8f * pluckSm;
+        r += std::tanh (gOutR) * grainSm + std::tanh (pOutR * pLevel * 1.2f) * 0.8f * pluckSm;
 
         // motion (chorus)
-        if (motion > 0.001f)
+        if (motionOn && motion > 0.001f)
         {
             chorus[0].push (l);
             chorus[1].push (r);
@@ -499,10 +539,18 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         fbLP[0] += (dl - fbLP[0]) * fbLpCoef;
         fbLP[1] += (dr - fbLP[1]) * fbLpCoef;
         const float mono = 0.5f * (l + r);
-        delay[0].push (mono + std::tanh (fbLP[1] * dFb));
-        delay[1].push (std::tanh (fbLP[0] * dFb));
-        l += dl * dMix;
-        r += dr * dMix;
+        if (delayOn)
+        {
+            delay[0].push (mono + std::tanh (fbLP[1] * dFb));
+            delay[1].push (std::tanh (fbLP[0] * dFb));
+            l += dl * dMix;
+            r += dr * dMix;
+        }
+        else
+        {
+            delay[0].push (0.0f);
+            delay[1].push (0.0f);
+        }
 
         // shimmer send
         const float shL = pitch[0].process (l, pitchWindow);
@@ -513,7 +561,7 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         fxL[i] = l;
         fxR[i] = r;
 
-        songPos += qPerSample;
+        if (running) songPos += qPerSample;
     }
 
     reverb.processStereo (sL, sR, n);
@@ -545,7 +593,7 @@ void GrooveGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     }
 
     freePos = songPos;
-    currentStep.store (lastIdx);
+    currentStep.store (running ? lastIdx : -1);
 }
 
 juce::AudioProcessorEditor* GrooveGardenProcessor::createEditor()

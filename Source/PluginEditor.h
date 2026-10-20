@@ -74,6 +74,7 @@ private:
     };
 
     void addKnob (const juce::String& paramId, const juce::String& text);
+    void addToggle (const juce::String& paramId, const juce::String& text);
     Knob& K (const juce::String& id) { return *knobs.at (id); }
     void setLevels (std::function<float (int)> fn);
     void setNotes (const std::vector<int>& degrees);
@@ -86,11 +87,11 @@ private:
     NoteStrip notes;
     juce::TextButton randomBtn { "Random" }, sineBtn { "Sin" }, triBtn { "Tri" }, rectBtn { "Rect" };
     juce::TextButton melodyBtn { "New Melody" };
-    juce::ToggleButton freezeBtn { "Freeze" };
     juce::ComboBox rateBox, shapeBox, rootBox, scaleBox;
     juce::Label rateLabel, shapeLabel, rootLabel, scaleLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> rateAtt, shapeAtt, rootAtt, scaleAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt;
+    std::map<juce::String, std::unique_ptr<juce::TextButton>> toggles;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> toggleAtts;
 
     std::map<juce::String, std::unique_ptr<Knob>> knobs;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> titles;

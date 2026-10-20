@@ -132,6 +132,15 @@ void GrooveGardenEditor::addKnob (const juce::String& paramId, const juce::Strin
     knobs[paramId] = std::move (k);
 }
 
+void GrooveGardenEditor::addToggle (const juce::String& paramId, const juce::String& text)
+{
+    auto b = std::make_unique<juce::TextButton> (text);
+    addAndMakeVisible (*b);
+    // the attachment makes the button a toggle and keeps it in sync with the parameter
+    toggleAtts.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, paramId, *b));
+    toggles[paramId] = std::move (b);
+}
+
 GrooveGardenEditor::GrooveGardenEditor (GrooveGardenProcessor& p)
     : AudioProcessorEditor (&p), proc (p), grid (p), notes (p)
 {
@@ -141,7 +150,9 @@ GrooveGardenEditor::GrooveGardenEditor (GrooveGardenProcessor& p)
     laf.setColour (juce::Slider::textBoxTextColourId, juce::Colours::white.withAlpha (0.85f));
     laf.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     laf.setColour (juce::TextButton::buttonColourId, juce::Colour (0x33ffffff));
-    laf.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    laf.setColour (juce::TextButton::textColourOffId, juce::Colours::white.withAlpha (0.55f));
+    laf.setColour (juce::TextButton::buttonOnColourId, accent.withAlpha (0.55f));
+    laf.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     laf.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0x33ffffff));
     laf.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     laf.setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
@@ -203,8 +214,11 @@ GrooveGardenEditor::GrooveGardenEditor (GrooveGardenProcessor& p)
     styleLabel (rootLabel, "Root");
     styleLabel (scaleLabel, "Scale");
 
-    addAndMakeVisible (freezeBtn);
-    freezeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "freeze", freezeBtn);
+    // on/off switches for every defining feature
+    addToggle ("seqOn", "Chop");        addToggle ("evolveOn", "Evolve");   addToggle ("motionOn", "Motion");
+    addToggle ("granOn", "Grains");     addToggle ("freeze", "Freeze");
+    addToggle ("pluckOn", "Melody");
+    addToggle ("delayOn", "Delay");     addToggle ("shimmerOn", "Shimmer"); addToggle ("reverbOn", "Reverb");
 
     // sequence + tone
     addKnob ("depth", "Depth");       addKnob ("source", "Source");
@@ -313,7 +327,7 @@ void GrooveGardenEditor::resized()
     juce::Rectangle<int> lastHead;
     auto section = [&] (const juce::String& title, std::vector<juce::String> ids, int perRow) -> juce::Rectangle<int>
     {
-        lastHead = r.removeFromTop (18);
+        lastHead = r.removeFromTop (20);
         titles.push_back ({ title, lastHead });
         auto row = r.removeFromTop (94);
         r.removeFromTop (4);
@@ -328,14 +342,26 @@ void GrooveGardenEditor::resized()
         return row;
     };
 
+    // puts the section's on/off buttons along the right of its header (last id = rightmost)
+    auto placeToggles = [&] (std::vector<juce::String> ids)
+    {
+        auto h = lastHead;
+        for (auto it = ids.rbegin(); it != ids.rend(); ++it)
+        {
+            toggles.at (*it)->setBounds (h.removeFromRight (74).reduced (2, 0));
+        }
+    };
+
     section ("SEQUENCE + TONE",
              { "depth", "source", "evolve", "filterAmt", "cutoff", "drive", "air", "motion" }, 8);
+    placeToggles ({ "seqOn", "evolveOn", "motionOn" });
 
     section ("GRANULATOR",
              { "gLevel", "gSize", "gDensity", "gBurst", "gPos", "gSpray", "gPitch", "gPitchSpray", "gScatter", "gReverse" }, 10);
-    freezeBtn.setBounds (lastHead.removeFromRight (80));
+    placeToggles ({ "granOn", "freeze" });
 
     auto left = section ("PLUCK / AUTOLEAD", { "pLevel", "pDecay", "pTone", "pPick", "pOct" }, 10);
+    placeToggles ({ "pluckOn" });
     auto combos = left.reduced (12, 30);
     rootLabel.setBounds (combos.removeFromLeft (44));
     combos.removeFromLeft (4);
@@ -347,4 +373,5 @@ void GrooveGardenEditor::resized()
 
     section ("SPACE + MASTER",
              { "delayMix", "delayFb", "shimmer", "reverbMix", "reverbSize", "width", "mix", "output" }, 8);
+    placeToggles ({ "delayOn", "shimmerOn", "reverbOn" });
 }
